@@ -134,3 +134,57 @@ jobs:
       # (value: output of `aws ecr get-login-password`) as GitHub Secrets.
       registry-username: ${{ secrets.REGISTRY_USERNAME }}
       registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+
+  # Runs after provenance is attached — downloads and prints the attestation
+  # JSON and verifies it, so the proof document is visible in the workflow logs.
+  verify-provenance:
+    needs: [build-and-push, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Downloads and pretty-prints the provenance attestation JSON.
+      # Shows builder ID, source repo, commit SHA, and build parameters —
+      # the core proof document of the supply chain.
+      - name: Display provenance attestation
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
+        run: |
+          echo "====== PROVENANCE ATTESTATION ======"
+          cosign download attestation "${IMAGE}@${DIGEST}" \
+            | jq -r '.payload' \
+            | base64 -d \
+            | jq .
+
+      # Verifies the attestation was signed by the SLSA framework workflow,
+      # not by this pipeline — confirming SLSA Level 2.
+      - name: Verify provenance attestation
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          DIGEST: ${{ needs.build-and-push.outputs.digest }}
+        run: |
+          echo "====== COSIGN VERIFY-ATTESTATION ======"
+          cosign verify-attestation \
+            --type slsaprovenance \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/slsa-framework/.*" \
+            "${IMAGE}@${DIGEST}" \
+            | jq -r '.payload' \
+            | base64 -d \
+            | jq .
