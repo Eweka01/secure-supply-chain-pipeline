@@ -2,7 +2,10 @@
 # Image scanning on push catches known CVEs at the registry level.
 resource "aws_ecr_repository" "app" {
   name                 = "supply-chain-app"
-  image_tag_mutability = "IMMUTABLE"
+  # MUTABLE required — cosign (.sig) and the SLSA generator (.att) both write
+  # to the same tag suffixes. Immutable tags block the second write permanently.
+  # Image integrity is enforced by digest references in Helm and Kyverno, not tags.
+  image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
     scan_on_push = true

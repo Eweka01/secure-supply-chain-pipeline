@@ -3,7 +3,7 @@ import os
 
 app = FastAPI(title="secure-supply-chain-app")
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 BUILD_COMMIT = os.getenv("BUILD_COMMIT", "unknown")
 BUILD_DATE = os.getenv("BUILD_DATE", "unknown")
 
