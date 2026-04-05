@@ -8,7 +8,6 @@ A production-grade supply chain security pipeline built on AWS EKS. Every image 
 
 <img width="2279" height="1235" alt="diagram-export-4-5-2026-5_49_32-AM" src="https://github.com/user-attachments/assets/9fe98f1d-afea-430a-b8c9-a006404ecdfa" />
 
-
 ---
 
 ## Prerequisites
@@ -123,8 +122,8 @@ Go to: **Repo → Settings → Secrets and variables → Actions**
 | `AWS_ACCESS_KEY_ID` | IAM access key |
 | `AWS_SECRET_ACCESS_KEY` | IAM secret key |
 | `ECR_REGISTRY` | `120430500058.dkr.ecr.us-east-1.amazonaws.com` |
-| `REGISTRY_USERNAME` | `AWS` (literal string, always) |
-| `REGISTRY_PASSWORD` | Output of `aws ecr get-login-password --region us-east-1` |
+| `REGISTRY_USERNAME` | `AWS` (literal string — not your repo name, not your username) |
+| `REGISTRY_PASSWORD` | ECR login token (see below) |
 
 ### GitHub Variables
 
@@ -132,7 +131,19 @@ Go to: **Repo → Settings → Secrets and variables → Actions**
 |---|---|
 | `AWS_REGION` | `us-east-1` |
 
-> **REGISTRY_PASSWORD** expires every 12 hours. Update it before running the workflow if it has been more than 12 hours since it was last set.
+### Setting secrets correctly (use CLI to avoid copy-paste errors)
+
+```bash
+# REGISTRY_USERNAME — always the literal string AWS, nothing else
+echo "AWS" | gh secret set REGISTRY_USERNAME --repo Eweka01/secure-supply-chain-pipeline
+
+# REGISTRY_PASSWORD — pipe directly to avoid truncation or whitespace issues
+aws ecr get-login-password --region us-east-1 | gh secret set REGISTRY_PASSWORD --repo Eweka01/secure-supply-chain-pipeline
+```
+
+> **REGISTRY_PASSWORD expires every 12 hours.** Re-run the command above before triggering the provenance job if it has been more than 12 hours.
+>
+> **Do not set REGISTRY_USERNAME via the GitHub UI by typing** — it is easy to accidentally paste the wrong value (e.g. your repo name). Use the CLI command above to set it to exactly `AWS`.
 
 ### What the CI pipeline does
 
@@ -145,8 +156,9 @@ Every push to `main` triggers three jobs:
 4. Verifies the signature immediately
 5. Generates a CycloneDX SBOM with Syft
 6. Scans the SBOM with Grype — fails the pipeline if any Critical CVE is found
-7. Uploads SBOM as a GitHub Actions artifact (retained 90 days)
-8. Uploads SBOM to S3 keyed by image digest
+7. Attests the SBOM to the image in ECR using `cosign attest --type cyclonedx` — required by Policy 3
+8. Uploads SBOM as a GitHub Actions artifact (retained 90 days)
+9. Uploads SBOM to S3 keyed by image digest
 
 **Job 2: `provenance`**
 - Calls the official SLSA GitHub Generator reusable workflow
@@ -321,27 +333,32 @@ kubectl patch deployment kyverno-admission-controller -n kyverno --type=json \
 kubectl rollout status deployment kyverno-admission-controller -n kyverno
 ```
 
-### Apply policies one at a time
+### Apply policies
 
 ```bash
-# Policy 1: block non-ECR images + verify Cosign signature
 kubectl apply -f policies/policy-1-require-signed-images.yaml
-kubectl get clusterpolicy require-signed-images
+kubectl apply -f policies/policy-2-require-slsa-provenance.yaml
+kubectl apply -f policies/policy-3-block-critical-cves.yaml
 
-# Test rejection (should be blocked instantly)
+# Verify all three are Ready
+kubectl get clusterpolicy
+```
+
+Expected output:
+```
+NAME                      ADMISSION   BACKGROUND   READY   AGE
+block-critical-cves       true        false        True    ...
+require-signed-images     true        false        True    ...
+require-slsa-provenance   true        false        True    ...
+```
+
+Test rejection:
+```bash
 kubectl run test-unsigned --image=nginx:latest -n supply-chain
 # Expected: admission webhook denied — Only images from 120430500058... are allowed
-
-# Test acceptance
-kubectl get pods -n supply-chain
-# supply-chain-app pods should be Running
-
-# Policy 2: require SLSA provenance
-kubectl apply -f policies/policy-2-require-slsa-provenance.yaml
-
-# Policy 3: block Critical CVEs
-kubectl apply -f policies/policy-3-block-critical-cves.yaml
 ```
+
+> **Policy 3 requires SBOM attestation.** The `cosign attest` step in CI attaches the SBOM to the image in ECR. Policy 3 will block any image that was built before this step was added to the pipeline. Re-run CI to produce a compliant image.
 
 ---
 
@@ -457,18 +474,27 @@ Default login: `admin` / `admin`
 ## Verify the Signatures
 
 ```bash
+IMAGE=120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app@sha256:<digest>
+
 # Verify Cosign signature
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp "https://github.com/Eweka01/.*" \
-  120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app@sha256:<digest>
+  $IMAGE
+
+# Verify SBOM attestation (CycloneDX)
+cosign verify-attestation \
+  --type cyclonedx \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp "https://github.com/Eweka01/.*" \
+  $IMAGE
 
 # Verify SLSA provenance attestation
 cosign verify-attestation \
   --type slsaprovenance \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp "https://github.com/slsa-framework/.*" \
-  120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app@sha256:<digest>
+  $IMAGE
 ```
 
 ---
@@ -499,6 +525,7 @@ for c in comps:
 | Images referenced by digest in Helm | Tags are mutable; digests are content-addressable and immutable |
 | Dependencies pinned in `requirements.txt` | Unpinned versions produce different SBOMs on every build |
 | Sign by digest, not by tag | Signing a tag is meaningless if the tag can be moved |
+| SBOM attested to image (not just uploaded to S3) | Policy 3 checks ECR attestations at admission time — S3 alone is not verifiable by Kyverno |
 | SLSA provenance in a separate job | Provenance generated by external workflow = SLSA Level 2 |
 | Kyverno webhook timeout set to 30s | Signature verification (Rekor + ECR) takes >10s from private subnets |
 | VPC endpoints for ECR | Avoids internet roundtrip from private nodes; faster and more reliable |
@@ -507,6 +534,19 @@ for c in comps:
 ---
 
 ## Troubleshooting
+
+**SLSA provenance job exits with code 27 (repeatedly)**
+Check the provenance job inputs in the GitHub Actions log. Expand the job and look at the `Inputs` section at the top:
+```
+registry-username: ← must show AWS here, not empty
+registry-password: *** ← must not be empty
+```
+If `registry-username` is empty, the `REGISTRY_USERNAME` secret is missing or was never set. Fix:
+```bash
+echo "AWS" | gh secret set REGISTRY_USERNAME --repo Eweka01/secure-supply-chain-pipeline
+aws ecr get-login-password --region us-east-1 | gh secret set REGISTRY_PASSWORD --repo Eweka01/secure-supply-chain-pipeline
+```
+> `REGISTRY_USERNAME` is always the literal string `AWS` — not your GitHub username, not your repo name.
 
 **`no basic auth credentials` when pushing to ECR**
 The `REGISTRY_PASSWORD` secret has expired. Regenerate:
@@ -524,6 +564,25 @@ kubectl patch deployment kyverno-admission-controller -n kyverno --type=json \
 
 **`CreateContainerError` on app pods**
 The digest in `helm/values.yaml` is pointing to a Cosign signature (`.sig`) or SLSA attestation (`.att`) object instead of the app image. Check ECR and use only the digest tagged with the short SHA.
+
+**`AccessDenied` uploading SBOM to S3 in CI**
+The IAM user `github-action-supply-chain` needs `s3:PutObject` on the SBOM bucket. Add the inline policy:
+```bash
+aws iam put-user-policy \
+  --user-name github-action-supply-chain \
+  --policy-name sbom-s3-upload \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:PutObject","s3:GetObject","s3:ListBucket"],
+      "Resource": [
+        "arn:aws:s3:::supply-chain-sboms-120430500058",
+        "arn:aws:s3:::supply-chain-sboms-120430500058/*"
+      ]
+    }]
+  }'
+```
 
 **Terraform `AccessDenied` on S3**
 The bucket name may be owned by another AWS account. Use account-ID-suffixed names:
