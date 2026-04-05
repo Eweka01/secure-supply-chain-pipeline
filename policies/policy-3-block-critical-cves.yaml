@@ -1,0 +1,37 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: block-critical-cves
+  annotations:
+    policies.kyverno.io/title: Block Critical CVEs
+    policies.kyverno.io/description: >-
+      Blocks any pod whose image has a CycloneDX SBOM attestation containing
+      Critical-severity vulnerabilities. Requires the SBOM to be attached as
+      an attestation to the image in ECR.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: check-sbom-no-critical-cves
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [supply-chain]
+      verifyImages:
+        - imageReferences:
+            - "120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app*"
+          attestations:
+            - type: https://cyclonedx.org/bom
+              attestors:
+                - entries:
+                    - keyless:
+                        subject: "https://github.com/Eweka01/*"
+                        issuer: "https://token.actions.githubusercontent.com"
+                        rekor:
+                          url: https://rekor.sigstore.dev
+              conditions:
+                - all:
+                    - key: "{{ components[].vulnerabilities[].ratings[].severity }}"
+                      operator: AllNotIn
+                      value: ["critical", "Critical", "CRITICAL"]

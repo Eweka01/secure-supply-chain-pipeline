@@ -1,0 +1,20 @@
+image:
+  repository: 120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app
+  # Reference by digest, not tag — required for Kyverno policy verification
+  digest: sha256:f00b0fe126246904fa05ec8c580a33cefdafd89326c8648682761964b226aa11
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi

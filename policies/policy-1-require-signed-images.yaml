@@ -1,0 +1,46 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-signed-images
+  annotations:
+    policies.kyverno.io/title: Require Signed Images
+    policies.kyverno.io/description: >-
+      Blocks any pod whose container image does not have a valid Cosign signature.
+      Images must be signed by the GitHub Actions workflow in the Eweka01 organisation.
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: block-non-ecr-images
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [supply-chain]
+      validate:
+        message: "Only images from 120430500058.dkr.ecr.us-east-1.amazonaws.com are allowed."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                any:
+                  - key: "{{ element.image }}"
+                    operator: NotEquals
+                    value: "120430500058.dkr.ecr.us-east-1.amazonaws.com/*"
+
+    - name: check-image-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [supply-chain]
+      verifyImages:
+        - imageReferences:
+            - "120430500058.dkr.ecr.us-east-1.amazonaws.com/supply-chain-app*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/Eweka01/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

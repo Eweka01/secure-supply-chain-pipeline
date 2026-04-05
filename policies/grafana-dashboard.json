@@ -1,0 +1,127 @@
+{
+  "title": "Supply Chain Security",
+  "uid": "supply-chain-security",
+  "tags": ["supply-chain", "kyverno", "security"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Policy Admission Requests (Pass vs Fail)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(rate(kyverno_admission_requests_total{resource_pass_count=\"true\"}[5m])) by (policy_name)",
+          "legendFormat": "PASS - {{policy_name}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        },
+        {
+          "expr": "sum(rate(kyverno_admission_requests_total{resource_pass_count=\"false\"}[5m])) by (policy_name)",
+          "legendFormat": "FAIL - {{policy_name}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Policy Violations (Total)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(kyverno_policy_results_total{rule_result=\"fail\"})",
+          "legendFormat": "Violations",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ],
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "id": 3,
+      "title": "Policy Passes (Total)",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "sum(kyverno_policy_results_total{rule_result=\"pass\"})",
+          "legendFormat": "Passes",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ],
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 4,
+      "title": "Admission Webhook Latency (p99)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(kyverno_admission_review_duration_seconds_bucket[5m])) by (le, admission_request_type))",
+          "legendFormat": "p99 - {{admission_request_type}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Policy Results by Rule",
+      "type": "bargauge",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(kyverno_policy_results_total) by (policy_name, rule_name, rule_result)",
+          "legendFormat": "{{policy_name}} / {{rule_name}} - {{rule_result}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ],
+      "options": {"orientation": "horizontal"}
+    },
+    {
+      "id": 6,
+      "title": "Running Pods in supply-chain Namespace",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "count(kube_pod_info{namespace=\"supply-chain\"})",
+          "legendFormat": "Pods",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ],
+      "options": {"colorMode": "background", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "id": 7,
+      "title": "Kyverno Admission Controller CPU",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"kyverno\", container=\"kyverno\"}[5m])) by (pod)",
+          "legendFormat": "{{pod}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Image Verification Results",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(kyverno_policy_results_total{rule_type=\"verifyImages\"}[5m])) by (rule_result)",
+          "legendFormat": "{{rule_result}}",
+          "datasource": {"type": "prometheus", "uid": "prometheus"}
+        }
+      ]
+    }
+  ],
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s"
+}
