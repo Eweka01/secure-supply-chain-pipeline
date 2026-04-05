@@ -11,9 +11,8 @@ RUN pip install --prefix=/install/deps --no-cache-dir -r requirements.txt
 
 
 # Stage 2: runtime image
-# TARGETPLATFORM = the platform the final image is intended to run on.
-# This ensures the runtime layer matches the target architecture (amd64 or arm64).
-FROM --platform=$TARGETPLATFORM python:3.12-slim AS runtime
+# No --platform flag here — Docker defaults to the target platform automatically.
+FROM python:3.12-slim AS runtime
 
 ARG BUILD_COMMIT=unknown
 ARG BUILD_DATE=unknown

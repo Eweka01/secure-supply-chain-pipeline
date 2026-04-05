@@ -42,9 +42,11 @@ jobs:
       # the image in ECR and the exact commit that produced it.
       # BUILD_COMMIT and BUILD_DATE are injected as build args so /info returns
       # real values instead of "unknown" in production.
+      # REGISTRY is taken from the ecr-login step output — guaranteed to match
+      # the authenticated registry URL, avoiding "no basic auth credentials" errors.
       - name: Build and push Docker image
         env:
-          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           SHA: ${{ github.sha }}
         run: |
           SHORT_SHA="${SHA::7}"
