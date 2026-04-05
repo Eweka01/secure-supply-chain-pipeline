@@ -6,7 +6,6 @@ A production-grade supply chain security pipeline built on AWS EKS. Every image 
 
 ## Architecture Overview
 
-```
 <img width="2279" height="1235" alt="diagram-export-4-5-2026-5_49_32-AM" src="https://github.com/user-attachments/assets/9fe98f1d-afea-430a-b8c9-a006404ecdfa" />
 
 
