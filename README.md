@@ -7,40 +7,8 @@ A production-grade supply chain security pipeline built on AWS EKS. Every image 
 ## Architecture Overview
 
 ```
-Developer Push
-      │
-      ▼
-GitHub Actions CI
-  ├── Build Docker image (SHA-tagged, never :latest)
-  ├── Push to ECR
-  ├── Sign image with Cosign (keyless, OIDC)
-  ├── Verify signature
-  ├── Generate SBOM with Syft (CycloneDX JSON)
-  ├── Scan SBOM with Grype (fail on Critical CVEs)
-  ├── Upload SBOM to S3
-  └── Generate SLSA Level 2 provenance attestation
-      │
-      ▼
-AWS ECR
-  ├── App image tagged :sha (e.g. :a1b2c3d)
-  ├── Cosign signature (.sig)
-  └── SLSA provenance attestation (.att)
-      │
-      ▼
-EKS Cluster (supply-chain namespace)
-  ├── Kyverno admission controller intercepts every deploy
-  │     ├── Policy 1: Block non-ECR images instantly
-  │     ├── Policy 1: Verify Cosign signature
-  │     ├── Policy 2: Verify SLSA provenance attestation
-  │     └── Policy 3: Block images with Critical CVEs
-  └── App pods run only after all policies pass
-      │
-      ▼
-Observability
-  ├── Prometheus scrapes Kyverno metrics
-  ├── Grafana dashboard (policy pass/fail, latency, violations)
-  └── SBOM Query API (instant CVE impact analysis)
-```
+<img width="2279" height="1235" alt="diagram-export-4-5-2026-5_49_32-AM" src="https://github.com/user-attachments/assets/9fe98f1d-afea-430a-b8c9-a006404ecdfa" />
+
 
 ---
 
