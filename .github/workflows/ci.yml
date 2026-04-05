@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
+      id-token: write   # Required for keyless Cosign signing via OIDC
 
     steps:
       - name: Checkout code
@@ -33,7 +35,8 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       # Tags with short Git SHA for traceability — never :latest.
-      # IMAGE_TAG written to GITHUB_ENV so subsequent steps can use it.
+      # Captures the image digest after push (sha256:...) — signing is done by
+      # digest, not tag, because digests are immutable and content-addressable.
       - name: Build and push Docker image
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -51,8 +54,33 @@ jobs:
 
           docker push "${IMAGE_TAG}"
 
+          # Capture the full image reference with digest for signing
+          IMAGE_DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE_TAG}")
+
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST=${IMAGE_DIGEST}" >> "$GITHUB_ENV"
           echo "Image pushed: ${IMAGE_TAG}"
+          echo "Digest: ${IMAGE_DIGEST}"
+
+      # Installs the Cosign CLI for keyless signing.
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Signs the image by digest using keyless mode.
+      # GitHub's OIDC token proves the signer identity (repo + workflow).
+      # The signature is stored in ECR alongside the image — no key management needed.
+      - name: Sign container image
+        run: cosign sign --yes ${{ env.IMAGE_DIGEST }}
+
+      # Verifies the signature immediately after signing.
+      # Checks three things: image was signed, cert was issued by GitHub Actions OIDC,
+      # and the signing workflow came from this repository.
+      - name: Verify signature
+        run: |
+          cosign verify \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            --certificate-identity-regexp "https://github.com/Eweka01/.*" \
+            ${{ env.IMAGE_DIGEST }}
 
       # Scans the image and produces a CycloneDX SBOM — every OS and Python package inside the container.
       - name: Generate SBOM
