@@ -1,0 +1,62 @@
+name: CI
+
+# Triggers on every push to main and on pull requests targeting main.
+# This ensures every commit that lands in main goes through the full build pipeline.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Base name of the image — the full tag is built as <ECR_REGISTRY>/<IMAGE_NAME>:<SHORT_SHA>
+  IMAGE_NAME: supply-chain-app
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      # Read-only access to repo contents is all this job needs
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Authenticates the runner with AWS using IAM credentials stored as GitHub Secrets.
+      # AWS_REGION is a repository variable (not a secret) since it is not sensitive.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Exchanges the AWS credentials for a temporary ECR login token
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Builds the image and tags it with the short Git SHA (first 7 chars).
+      # Using the SHA instead of :latest creates a direct, traceable link between
+      # the image in ECR and the exact commit that produced it.
+      # BUILD_COMMIT and BUILD_DATE are injected as build args so /info returns
+      # real values instead of "unknown" in production.
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ secrets.ECR_REGISTRY }}
+          SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA="${SHA::7}"
+          IMAGE_TAG="${REGISTRY}/${IMAGE_NAME}:${SHORT_SHA}"
+
+          docker build \
+            --build-arg BUILD_COMMIT="${SHORT_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -f docker/Dockerfile \
+            -t "${IMAGE_TAG}" \
+            .
+
+          docker push "${IMAGE_TAG}"
+
+          echo "Image pushed: ${IMAGE_TAG}"
