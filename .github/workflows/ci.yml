@@ -1,7 +1,6 @@
 name: CI
 
-# Triggers on every push to main and on pull requests targeting main.
-# This ensures every commit that lands in main goes through the full build pipeline.
+# Triggers on push to main and on pull requests targeting main.
 on:
   push:
     branches: [main]
@@ -9,22 +8,19 @@ on:
     branches: [main]
 
 env:
-  # Base name of the image — the full tag is built as <ECR_REGISTRY>/<IMAGE_NAME>:<SHORT_SHA>
   IMAGE_NAME: supply-chain-app
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      # Read-only access to repo contents is all this job needs
       contents: read
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Authenticates the runner with AWS using IAM credentials stored as GitHub Secrets.
-      # AWS_REGION is a repository variable (not a secret) since it is not sensitive.
+      # AWS_REGION is a variable (not a secret) — it is not sensitive.
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -32,18 +28,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # Exchanges the AWS credentials for a temporary ECR login token
       - name: Log in to Amazon ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      # Builds the image and tags it with the short Git SHA (first 7 chars).
-      # Using the SHA instead of :latest creates a direct, traceable link between
-      # the image in ECR and the exact commit that produced it.
-      # BUILD_COMMIT and BUILD_DATE are injected as build args so /info returns
-      # real values instead of "unknown" in production.
-      # REGISTRY is taken from the ecr-login step output — guaranteed to match
-      # the authenticated registry URL, avoiding "no basic auth credentials" errors.
+      # Tags with short Git SHA for traceability — never :latest.
+      # IMAGE_TAG written to GITHUB_ENV so subsequent steps can use it.
       - name: Build and push Docker image
         env:
           REGISTRY: ${{ steps.ecr-login.outputs.registry }}
@@ -61,4 +51,28 @@ jobs:
 
           docker push "${IMAGE_TAG}"
 
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "Image pushed: ${IMAGE_TAG}"
+
+      # Scans the image and produces a CycloneDX SBOM — every OS and Python package inside the container.
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.IMAGE_TAG }}
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+
+      - name: Install Grype
+        run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      # Policy gate — fails the pipeline if any Critical CVE is found.
+      - name: Scan SBOM for vulnerabilities
+        run: grype sbom:sbom.cyclonedx.json --fail-on critical
+
+      # Permanently associates the SBOM with this build run.
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cyclonedx.json
+          retention-days: 90
