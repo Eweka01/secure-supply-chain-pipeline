@@ -10,7 +10,7 @@ BUILD_DATE = os.getenv("BUILD_DATE", "unknown")
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {"status": "healthy1"}
 
 
 @app.get("/info")
